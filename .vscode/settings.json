@@ -1,0 +1,14 @@
+{
+  "python.formatting.provider": "none",
+  "editor.formatOnSave": true,
+  "python.analysis.typeCheckingMode": "basic",
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  },
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.DS_Store": true,
+    "**/*.zip": true,
+    "**/*.csv": true
+  }
+}
