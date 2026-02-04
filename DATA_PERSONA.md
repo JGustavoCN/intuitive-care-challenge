@@ -1,102 +1,183 @@
-# 🕵️‍♂️ Persona dos Dados: Diagnóstico e Estratégia
+# Data Persona: O Ecossistema de Dados da ANS
 
 > **Documento de Referência Técnica**
-> Este documento detalha a natureza dos dados da ANS, suas anomalias identificadas e a estratégia de engenharia adotada para normalização e enriquecimento.
+> Este documento detalha a natureza dos dados da ANS (Agência Nacional de Saúde Suplementar), diagnostica anomalias identificadas, define as especificidades dos arquivos e detalha a estratégia de engenharia de dados adotada para normalização, limpeza e enriquecimento.
 
 ---
 
 ## 1. O Protagonista: Demonstrações Contábeis
 
-Estes arquivos representam o balanço financeiro das operadoras de saúde. Eles são o alvo principal da extração.
+Estes arquivos representam o balanço financeiro das operadoras de saúde. Eles constituem o alvo principal da extração e contêm os valores monetários trimestrais que devem ser analisados.
 
-- **Fonte:** `https://dadosabertos.ans.gov.br/FTP/PDA/demonstracoes_contabeis/`
+- **Fonte Oficial:** `https://dadosabertos.ans.gov.br/FTP/PDA/demonstracoes_contabeis/`
+- **Responsável:** Diretoria de Normas e Habilitação das Operadoras (DIOPE).
 - **Granularidade:** Trimestral (acumulado por operadora).
-- **Chave Primária:** `REG_ANS` (Registro na ANS). **Atenção:** Não possui CNPJ.
+- **Chave Primária:** `REG_ANS` (Registro na ANS).
 
-### 🎭 Personalidade (Variações e Anomalias)
+### Defeito Crítico: Anonimato Fiscal
 
-Os dados não são padronizados ao longo do tempo. O código deve ser resiliente às seguintes "mudanças de humor":
+Este conjunto de dados possui uma característica crítica: ele contém o código da operadora (`REG_ANS`), mas **não possui** `CNPJ` nem `Razão Social`. Para gerar um relatório legalmente válido ou útil para cruzamentos fiscais, é obrigatório enriquecer estes dados com fontes cadastrais externas.
 
-#### A. Nomenclatura dos Arquivos (Caos Criativo)
+### Esquema de Colunas (Schema)
 
-Não existe um padrão único de nomeação nos ZIPs. Exemplos reais mapeados:
+| Nome do Campo         | Tipo      | Descrição                                                                                       |
+| --------------------- | --------- | ----------------------------------------------------------------------------------------------- |
+| **DATA**              | Data      | Data de referência do trimestre (Formato `AAAA-MM-DD`). Geralmente o primeiro dia do trimestre. |
+| **REG_ANS**           | Texto/Num | Código único da operadora. Chave de junção.                                                     |
+| **CD_CONTA_CONTABIL** | Texto     | Código hierárquico da conta (Ex: `4`, `41`, `411`).                                             |
+| **DESCRICAO**         | Texto     | Nome da conta contábil (Ex: `DESPESAS ASSISTENCIAIS`).                                          |
+| **VL_SALDO_INICIAL**  | Decimal   | Saldo no início do período. (Pode não existir em arquivos antigos).                             |
+| **VL_SALDO_FINAL**    | Decimal   | Saldo acumulado no fim do período. O valor principal da análise.                                |
+
+### Diagnóstico de Anomalias e Variações
+
+O código de extração e processamento foi projetado para ser resiliente às seguintes variações históricas identificadas nos arquivos da ANS:
+
+#### A. Nomenclatura Não Padronizada dos Arquivos
+
+Não existe padrão ISO consistente nos arquivos ZIP disponibilizados no FTP. Exemplos reais mapeados:
 
 - **Padrão Moderno:** `1T2025.zip`, `2T2025.zip`
 - **Padrão Verboso:** `2013-1t.zip`, `3-Trimestre.zip`
 - **Padrão Datado:** `20130416_1T2012.zip`
 - **Padrão Extenso:** `20120614_2011_1_trimestre.zip`
 
-> **Solução Técnica:** Não confiar em `split()`. Utilizar **Regex** para capturar o ano (`\d{4}`) e o trimestre (`\d` seguido de `t` ou `trim`).
+> **Solução Técnica:** Não confiar em divisões de string simples (split). Utilizar Expressões Regulares (Regex) para capturar o ano (`\d{4}`) e o trimestre (`\d` seguido de `t` ou `trim`), ignorando o restante do nome do arquivo.
 
-#### B. Cabeçalhos (Headers) Mutantes
+#### B. Encoding e Codificação de Caracteres
 
-As colunas mudam dependendo da época:
+Embora a documentação recente sugira padronização, arquivos antigos podem estar codificados em `Latin-1` (CP1252) ou conter caracteres corrompidos (ex: `DepÃ³sitos`), enquanto novos arquivos estão em `UTF-8`.
 
-- **Layout Completo:** `"DATA";"REG_ANS";"CD_CONTA_CONTABIL";"DESCRICAO";"VL_SALDO_INICIAL";"VL_SALDO_FINAL"`
-- **Layout Antigo:** `"DATA";"REG_ANS";"CD_CONTA_CONTABIL";"DESCRICAO";"VL_SALDO_FINAL"`
+> **Solução Técnica:** Pipeline de leitura com fallback automático. O sistema tenta ler como `utf-8`; em caso de `UnicodeDecodeError`, reprocessa utilizando `latin-1`.
 
-> **Solução Técnica:** Normalização durante a leitura. Se `VL_SALDO_INICIAL` não existir, assumir `0.0` ou ignorar se o foco for apenas o saldo final.
+#### C. Variação de Cabeçalhos (Headers)
 
-#### C. Encoding (A Pegadinha)
+Arquivos mais antigos podem suprimir a coluna `VL_SALDO_INICIAL`. O parser deve ser flexível para mapear colunas pelo nome e não pela posição, evitando erros de índice.
 
-Embora se apresentem como CSVs modernos, muitos arquivos antigos (e até alguns novos) contêm caracteres como `DepÃ³sitos` ou usam codificação `Latin-1` (ANSI) em vez de `UTF-8`.
+#### D. Hierarquia Contábil (Risco de Duplicação)
 
-- **Estratégia:** Tentar ler como `utf-8`. Em caso de `UnicodeDecodeError`, fazer fallback para `latin-1` (cp1252).
+O arquivo contém tanto as contas sintéticas ("mães") quanto as analíticas ("filhas"). Somar a coluna `VL_SALDO_FINAL` sem critérios resultará em valores duplicados ou triplicados.
 
----
-
-## 2. O Elo Perdido: Enriquecimento Cadastral (CADOP)
-
-Como os arquivos contábeis **não possuem CNPJ nem Razão Social**, precisamos buscar essas informações externamente.
-
-### O Problema da Temporalidade ⏳
-
-Se cruzarmos os dados contábeis de um trimestre passado apenas com a lista de operadoras **Ativas** hoje, perderemos informações de operadoras que faliram ou foram canceladas nesse intervalo.
-
-### 🧠 Estratégia de Enriquecimento (Join)
-
-Para garantir a integridade histórica, criaremos uma **Tabela Mestra de Operadoras** unificando duas fontes:
-
-| Fonte          | URL                                                                       | Função                                                                                                    |
-| :------------- | :------------------------------------------------------------------------ | :-------------------------------------------------------------------------------------------------------- |
-| **Ativas**     | `/operadoras_de_plano_de_saude_ativas/Relatorio_cadop.csv`                | Base primária (90%+ dos casos).                                                                           |
-| **Canceladas** | `/operadoras_de_plano_de_saude_canceladas/Relatorio_cadop_canceladas.csv` | **Fallback Histórico**. Garante que operadoras extintas ainda tenham seus CNPJs identificados no passado. |
-
-> **Nota de Decisão:** Fontes como "Operadoras Acreditadas" ou "Não Hospitalares" foram descartadas por serem subconjuntos ou fora do escopo financeiro principal.
+> **Solução Técnica:** É necessário filtrar pelo nível analítico mais baixo ou selecionar contas específicas (ex: filtrar pela descrição exata da conta desejada).
 
 ---
 
-## 3. Acesso e Filtros (Scraping)
+## 2. Módulo de Enriquecimento: Ecossistema Cadastral (CADOP)
 
-A navegação no FTP da ANS pode ser feita manipulando a URL ou interpretando o HTML `Index of`.
+Para resolver a ausência de CNPJ no arquivo contábil, recorremos ao CADOP (Cadastro de Operadoras).
+
+### O Problema da Temporalidade
+
+O arquivo contábil é um registro histórico (ex: 1º Trimestre de 2024). Se cruzarmos esses dados apenas com a lista de operadoras **Ativas** hoje, perderemos os dados das empresas que faliram, foram fundidas ou canceladas no intervalo entre a publicação do balanço e a data atual.
+
+### Fontes de Dados para Enriquecimento
+
+Para garantir a integridade histórica dos dados, unificamos duas fontes oficiais:
+
+#### Fonte A: Operadoras Ativas
+
+- **Arquivo:** `Relatorio_cadop.csv`
+- **Localização FTP:** `/operadoras_de_plano_de_saude_ativas/`
+- **Função:** Base primária (cobre a vasta maioria dos casos). Representa empresas operantes e regularizadas.
+
+#### Fonte B: Operadoras Canceladas
+
+- **Arquivo:** `Relatorio_cadop_canceladas.csv`
+- **Localização FTP:** `/operadoras_de_plano_de_saude_canceladas/`
+- **Função:** Fallback Histórico. Garante que operadoras extintas ainda tenham seus CNPJs identificados nos balanços passados.
+- **Diferencial:** Possui colunas exclusivas como `Data_Descredenciamento` e `Motivo_do_Descredenciamento`.
+
+### Estrutura Cadastral Unificada (Target Schema)
+
+Após a unificação das fontes, espera-se a seguinte estrutura para o cruzamento:
+
+| Coluna Original      | Nome Normalizado  | Descrição                                                |
+| -------------------- | ----------------- | -------------------------------------------------------- |
+| `REGISTRO_OPERADORA` | **REG_ANS**       | Chave Primária padronizada para Join.                    |
+| `CNPJ`               | **CNPJ**          | Identificador fiscal (Texto, mantendo zeros à esquerda). |
+| `Razao_Social`       | **Razao_Social**  | Nome jurídico da entidade.                               |
+| `Modalidade`         | **Modalidade**    | Classificação (Ex: Medicina de Grupo, Cooperativa).      |
+| `Data_Registro_ANS`  | **Data_Registro** | Data de entrada no sistema.                              |
+
+### Domínio de Dados: Região de Comercialização
+
+Código numérico presente no CADOP que indica a abrangência geográfica da operadora:
+
+- **1:** Nacional.
+- **2:** Grupo de Estados (incluindo SP).
+- **3:** Estadual (Único estado, exceto SP).
+- **4:** Municipal (Capitais específicas).
+- **5:** Grupo de Municípios.
+- **6:** Municipal (Outros).
+
+---
+
+## 3. Estratégia de Acesso e Scraping
+
+A navegação no FTP da ANS exige manipulação de URL e interpretação de HTML.
 
 ### Parâmetros de Ordenação da URL
 
-Úteis para inspeção manual ou se quisermos forçar uma ordem de raspagem:
+Para garantir a obtenção dos arquivos corretos via script, utilizam-se parâmetros de query string no servidor Apache da ANS:
 
-- `?C=N;O=D` -> Order by **N**ame (Descending)
-- `?C=M;O=A` -> Order by **M**odified Date (Ascending) - _Útil para pegar o mais recente_
-- `?C=S;O=A` -> Order by **S**ize
+- `?C=N;O=D`: Ordenar por **N**ome (Decrescente).
+- `?C=M;O=A`: Ordenar por Data de **M**odificação (Crescente) - _Útil para identificar a versão mais recente_.
+- `?C=S;O=A`: Ordenar por Tamanho (**S**ize).
 
 ### Estrutura de Diretórios
 
-- Raiz: `YYYY/` (Ex: `2025/`, `2024/`)
-- Conteúdo: Arquivos `.zip` ou `.csv`.
-- **Risco:** Alguns trimestres podem ter múltiplos arquivos (republicações).
-- **Decisão:** Priorizar o arquivo com data de modificação mais recente ou processar todos e remover duplicatas via `hash` do arquivo.
+- **Raiz:** `YYYY/` (Ex: `2025/`, `2024/`).
+- **Conteúdo:** Arquivos `.zip` (preferenciais) ou `.csv`.
+- **Risco Mapeado:** Alguns trimestres podem conter múltiplos arquivos devido a republicações. A estratégia deve priorizar o arquivo com data de modificação mais recente.
 
 ---
 
-## 4. Resumo da Pipeline (ETL)
+## 4. Pipeline de Engenharia de Dados (ETL)
 
-1. **Extract (Scraper):**
-   - Iterar diretórios `Demonstracoes_Contabeis`.
-   - Baixar ZIPs.
-   - Baixar `Relatorio_cadop.csv` (Ativas) e `Relatorio_cadop_canceladas.csv`.
-2. **Transform (Processor):**
-   - **Normalizar:** Resolver encoding e separadores (`;`).
-   - **Limpar:** Remover duplicatas contábeis.
-   - **Enriquecer:** Fazer `MERGE` (Left Join) da Contabilidade com (Ativas + Canceladas) usando `REG_ANS` como chave.
-   - **Filtrar:** Buscar apenas a conta "EVENTOS/ SINISTROS CONHECIDOS OU AVISADOS DE ASSISTÊNCIA A SAÚDE MEDICO HOSPITALAR" (Filtro por texto na coluna `DESCRICAO` ou código contábil).
-3. **Load:**
-   - Salvar CSV final: `data/processed/demonstracoes_consolidadas.csv`.
+Para assegurar a consistência e qualidade dos dados finais, o pipeline segue estritamente os passos abaixo:
+
+### Passo 1: Extração (Scraper)
+
+1. Iterar sobre os diretórios de `Demonstracoes_Contabeis`.
+2. Baixar os arquivos ZIP aplicando o filtro de trimestres solicitados.
+3. Baixar obrigatoriamente `Relatorio_cadop.csv` (Ativas) e `Relatorio_cadop_canceladas.csv` (Canceladas).
+
+### Passo 2: Transformação e Unificação (Processor)
+
+A lógica de processamento deve tratar a mudança de schema (Schema Drift) e priorização de dados:
+
+1. **Normalização:** Renomear a coluna `REGISTRO_OPERADORA` para `REG_ANS` em ambos os arquivos do CADOP para permitir a junção. Garantir que a coluna `CNPJ` seja tratada como string (texto) para não perder zeros à esquerda.
+2. **Empilhamento (Stacking):** Concatenar verticalmente o DataFrame de Ativas e o DataFrame de Canceladas, criando um _DataFrame Mestre de Operadoras_.
+3. **Deduplicação Inteligente:**
+
+- Ordenar o DataFrame Mestre por `Data_Registro_ANS` (ou data de atualização do arquivo) de forma decrescente.
+- Remover duplicatas baseadas na chave `REG_ANS`, mantendo a ocorrência mais recente (`keep='first'`). Isso prioriza os dados da tabela de Ativas caso a operadora conste em ambas por erro sistêmico ou transição recente.
+
+### Passo 3: Enriquecimento (Join)
+
+A junção final entre os dados financeiros e cadastrais segue a lógica de Left Merge:
+
+```text
+Resultado = Tabela_Contabil (Left Join) Tabela_Mestra_Operadoras ON "REG_ANS"
+
+```
+
+- **Justificativa:** O uso do Left Join garante que **nenhum dado financeiro seja descartado**, mesmo que a operadora não seja encontrada no cadastro (situação de borda).
+- **Tratamento de Falhas:** Se o campo `CNPJ` resultar em nulo após o join, preencher com "NAO_ENCONTRADO" para fins de auditoria e logs de qualidade de dados.
+
+### Passo 4: Limpeza, Filtros e Consolidação
+
+- **Conversão de Tipos:** Converter colunas de data para formato ISO 8601 e garantir que valores monetários sejam `float`.
+- **Filtro de Contas:** Filtrar especificamente a conta contábil solicitada ("EVENTOS/ SINISTROS...") seja pelo código da conta ou pela descrição textual.
+- **Consolidação (Agrupamento):** O dado bruto possui granularidade analítica (subcontas). Aplicamos uma agregação (`SUM`) agrupando por `CNPJ`, `Ano` e `Trimestre` para gerar uma visão gerencial unificada (uma linha por empresa), eliminando duplicatas visuais e atendendo ao requisito do relatório final.
+
+---
+
+## 5. Definições Técnicas de Parsing (CSV)
+
+Parâmetros mandatórios para a leitura correta dos arquivos brutos da ANS (via Pandas ou bibliotecas similares):
+
+- **Delimitador:** Ponto e vírgula (`;`).
+- **Caractere de Citação (Quotechar):** Aspas duplas (`"`). Essencial para campos de texto que contêm delimitadores internos (ex: logradouros ou razões sociais complexas).
+- **Separador Decimal:** Vírgula (`,`). Deve ser convertido para ponto flutuante (float).
+- **Tratamento de Encoding:** Tentativa primária em `utf-8`; fallback secundário para `latin-1` (cp1252) em caso de falha.

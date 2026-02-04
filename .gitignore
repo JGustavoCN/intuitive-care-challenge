@@ -205,3 +205,21 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# Ignorar arquivos de ambiente e IDE
+__pycache__/
+*.py[cod]
+venv/
+.vscode/
+.env
+
+# Ignorar DADOS (Crucial)
+data/
+*.zip
+*.csv
+*.xlsx
+*.ods
+
+# Ignorar logs do sistema (se houver)
+*.log

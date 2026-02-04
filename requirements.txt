@@ -1,0 +1,10 @@
+# Extração de dados (Scraper)
+requests
+beautifulsoup4
+
+# Processamento de dados (Processor)
+pandas
+openpyxl
+
+# Qualidade de Código e Formatação
+black

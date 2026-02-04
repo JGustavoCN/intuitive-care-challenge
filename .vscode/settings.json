@@ -5,6 +5,7 @@
   "[python]": {
     "editor.defaultFormatter": "ms-python.black-formatter"
   },
+  "autoDocstring.docstringFormat": "google",
   "files.exclude": {
     "**/__pycache__": true,
     "**/.DS_Store": true,
