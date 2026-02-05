@@ -180,7 +180,8 @@ Optou-se pela **Normalização (Opção B)**, separando os dados em duas tabelas
 │   ├── processor.py     # ETL: Limpeza, Normalização e Consolidação
 │   └── validator.py     # Motor de regras de qualidade de dados
 ├── main.py              # Orquestrador (Entrypoint)
-├── queries_analiticas.sql # Script SQL da Tarefa 3
+├── sql/                 # Armazenamento de queries
+│   └── queries.sql      # Script SQL da Tarefa 3
 ├── DATA_PERSONA.md      # Documentação Técnica de Domínio
 ├── requirements.txt     # Dependências do projeto
 └── README.md            # Documentação Geral
