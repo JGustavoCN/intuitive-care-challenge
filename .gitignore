@@ -248,3 +248,6 @@ Thumbs.db
 
 # Nota: Não estamos ignorando .vscode/ propositalmente 
 # para compartilhar as tasks e launch.json que criamos.
+data/*
+!data/processed/.gitkeep
+!data/raw/.gitkeep
