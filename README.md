@@ -71,6 +71,73 @@ Conforme solicitado no requisito 1.3, abaixo está a matriz de inconsistências 
 
 ---
 
+## 🛡️ Parte 2: Transformação, Validação e Agregação
+
+Esta seção detalha as estratégias de Engenharia de Dados aplicadas para garantir a qualidade e enriquecimento do dataset, conforme requisitos 2.1, 2.2 e 2.3.
+
+### 2.1 Qualidade e Validação de Dados (`validator.py`)
+
+Implementação de um motor de regras para auditoria dos dados consolidados.
+
+- **Regras Implementadas:**
+  1. **CNPJ:** Validação matemática de dígitos verificadores (Módulo 11).
+  2. **Razão Social:** Verificação de existência e nulidade.
+  3. **Valores:** Detecção de valores negativos (inconsistência potencial em despesas).
+
+#### ⚖️ Trade-off: Soft Validation (Flagging) vs. Hard Validation (Drop)
+
+- **Decisão:** Adotar estratégia de **Flagging**. Registros inválidos são mantidos no dataset final, mas marcados com colunas booleanas (`Registro_Conforme`, `CNPJ_Valido`).
+
+- **Justificativa:**
+  - _Auditabilidade:_ Permite que analistas rastreiem a origem do erro (falha na fonte da ANS vs. erro de ETL).
+  - _Integridade Financeira:_ Em contabilidade, valores negativos podem ser reversões legítimas. Excluí-los silenciosamente distorceria o balanço final do setor.
+  - _Transparência:_ O consumidor do dado recebe a informação completa e decide se filtra (`WHERE Registro_Conforme = True`) ou se investiga as anomalias.
+
+---
+
+### 2.2 Enriquecimento e Tratamento de Falhas (Join)
+
+Cruzamento das Demonstrações Contábeis com o Mestre de Operadoras (Ativas + Canceladas) para obter `CNPJ`, `Modalidade` e `UF`.
+
+#### 🧩 Estratégia de Join e Chaves
+
+- **Chave de Ligação:** Utilizamos `RegistroANS` (REG_ANS).
+  - _Motivo:_ Os arquivos contábeis brutos da ANS **não possuem CNPJ**, apenas o código `REG_ANS`. O join é técnico (código-para-código) para então recuperar o CNPJ fiscal.
+
+- **Tipo de Join:** `Left Join` (Contábil → Cadastral).
+
+#### ⚖️ Trade-off: Integridade Financeira vs. Cadastral
+
+Como tratar registros contábeis que não possuem correspondência no arquivo de cadastro ("Orfãos")?
+
+- **Decisão:** **Preservação com Fallback**.
+  - Preenchemos dados faltantes com placeholders: `CNPJ="NAO_ENCONTRADO"`, `RazaoSocial="OPERADORA_NAO_IDENTIFICADA"`.
+  - Utilizamos `dropna=False` na agregação final.
+- **Justificativa:** A prioridade é o **Saldo Financeiro**. Se uma operadora movimentou valores (tem balanço), esse dinheiro deve constar no relatório total, mesmo que o cadastro da empresa esteja falho na fonte. O registro é salvo, mas marcado como `Registro_Conforme=False` pelo validador.
+
+---
+
+### 2.3 Agregação e Estatística (`despesas_agregadas.csv`)
+
+Geração de visão analítica agrupada por Operadora e Estado (UF).
+
+#### 📊 Métricas Calculadas
+
+1. **Valor Total:** Soma do período (KPI principal).
+2. **Média Trimestral:** Ticket médio de despesa.
+3. **Desvio Padrão:** Medida de volatilidade/risco.
+   - _Tratamento:_ Operadoras com apenas 1 trimestre recebem desvio `0.0` (sem variação).
+
+#### ⚖️ Trade-off: Ordenação
+
+- **Decisão:** Ordenação em memória (`QuickSort`) por Valor Total Decrescente.
+
+- **Justificativa:**
+  - _Performance:_ O dataset agregado (uma linha por empresa) é pequeno o suficiente para caber na RAM, tornando desnecessário o uso de ordenação externa (disco) ou banco de dados.
+  - _Negócio:_ A ordenação decrescente favorece a análise de "Curva ABC", destacando imediatamente as operadoras com maior impacto sistêmico.
+
+---
+
 ## 📂 Estrutura do Projeto
 
 ```text

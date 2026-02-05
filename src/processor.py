@@ -6,6 +6,7 @@ import shutil
 import pandas as pd
 from typing import List, Optional
 import csv
+from .validator import DataValidator
 
 
 class DataProcessor:
@@ -110,30 +111,34 @@ class DataProcessor:
 
         cadop_master = pd.concat(dfs, ignore_index=True)
         col_map = {
-            "REGISTRO_ANS": "REG_ANS",
-            "REGISTRO_OPERADORA": "REG_ANS",
-            "CD_NOTA": "REG_ANS",
+            "REGISTRO_ANS": "RegistroANS",
+            "REGISTRO_OPERADORA": "RegistroANS",
+            "CD_NOTA": "RegistroANS",
             "CNPJ": "CNPJ",
             "RAZAO_SOCIAL": "RazaoSocial",
             "NO_RAZAO_SOCIAL": "RazaoSocial",
             "NM_RAZAO_SOCIAL": "RazaoSocial",
+            "MODALIDADE": "Modalidade",
+            "UF": "UF",
         }
 
         cadop_master = cadop_master.rename(
             columns={k: v for k, v in col_map.items() if k in cadop_master.columns}
         )
 
-        if "REG_ANS" not in cadop_master.columns:
+        if "RegistroANS" not in cadop_master.columns:
             logging.error(
-                f"[ERRO] Coluna chave REG_ANS não encontrada. Colunas disponíveis: {cadop_master.columns.tolist()}"
+                f"[ERRO] Coluna chave RegistroANS não encontrada. Colunas disponíveis: {cadop_master.columns.tolist()}"
             )
             return pd.DataFrame()
 
         try:
-            cols_to_keep = ["REG_ANS", "CNPJ", "RazaoSocial"]
+            cols_to_keep = ["RegistroANS", "CNPJ", "RazaoSocial", "Modalidade", "UF"]
             available = [c for c in cols_to_keep if c in cadop_master.columns]
 
-            cadop_master = cadop_master[available].drop_duplicates(subset=["REG_ANS"])
+            cadop_master = cadop_master[available].drop_duplicates(
+                subset=["RegistroANS"]
+            )
             logging.info(
                 f"[SUCESSO] Mestre CADOP carregado: {len(cadop_master)} operadoras únicas."
             )
@@ -143,17 +148,26 @@ class DataProcessor:
             return pd.DataFrame()
 
     def process_accounting_files(self) -> pd.DataFrame:
-        """Executa a extração e filtragem dos arquivos contábeis (Item 1.2).
+        """
+        Executa a extração, normalização e filtragem dos arquivos contábeis (Item 1.2).
 
-        Lógica:
-        1. Itera sobre os ZIPs baixados.
-        2. Extrai arquivos CSV/Excel/TXT temporariamente.
-        3. Normaliza cabeçalhos (Uppercase, sem acentos).
-        4. Filtra lançamentos contendo 'EVENTO' ou 'SINISTRO'.
-        5. Limpa formatação numérica brasileira (ex: '1.000,00' -> 1000.00).
+        Este método é o núcleo da transformação dos dados financeiros. Ele itera sobre
+        os arquivos ZIP baixados, extrai o conteúdo tabular e aplica as regras de negócio
+        para isolar as despesas assistenciais.
+
+        Etapas do Processo:
+        1. Identificação Temporal: Extrai Ano/Trimestre do nome do arquivo ZIP via Regex.
+        2. Extração Segura: Descompacta arquivos temporariamente em disco (suporte a xlsx/csv).
+        3. Normalização de Schema: Padroniza nomes de colunas (ex: 'REG_ANS' -> 'RegistroANS')
+           e remove acentuação para evitar erros de encoding.
+        4. Filtro de Negócio: Seleciona apenas linhas contendo 'EVENTO' ou 'SINISTRO'.
+        5. Sanitização Numérica: Converte valores monetários do formato brasileiro
+           ('1.000,00') para float padrão ('1000.00').
 
         Returns:
-            pd.DataFrame: DataFrame consolidado contendo apenas as despesas filtradas.
+            pd.DataFrame: DataFrame empilhado (stacked) contendo as colunas:
+            ['RegistroANS', 'Ano', 'Trimestre', 'VL_SALDO_FINAL']. Retorna DataFrame
+            vazio caso nenhum dado seja processado.
         """
         all_data = []
         accounting_zips = [f for f in self.input_files if f.endswith(".zip")]
@@ -189,11 +203,12 @@ class DataProcessor:
                             "CD_CONTA": "CD_CONTA_CONTABIL",
                             "DESCRIÇÃO": "DESCRICAO",
                             "SALDO_FINAL": "VL_SALDO_FINAL",
+                            "REG_ANS": "RegistroANS",
                         }
                         df = df.rename(columns=rename_map)
 
                         required = [
-                            "REG_ANS",
+                            "RegistroANS",
                             "CD_CONTA_CONTABIL",
                             "DESCRICAO",
                             "VL_SALDO_FINAL",
@@ -223,7 +238,12 @@ class DataProcessor:
 
                             all_data.append(
                                 df_filtered[
-                                    ["REG_ANS", "Ano", "Trimestre", "VL_SALDO_FINAL"]
+                                    [
+                                        "RegistroANS",
+                                        "Ano",
+                                        "Trimestre",
+                                        "VL_SALDO_FINAL",
+                                    ]
                                 ]
                             )
 
@@ -235,42 +255,118 @@ class DataProcessor:
             return pd.DataFrame()
         return pd.concat(all_data, ignore_index=True)
 
-    def enrich_and_export(self, df_contabil: pd.DataFrame, df_cadop: pd.DataFrame):
-        """Consolida os dados (Item 1.3), realiza o Enriquecimento (Join) e exporta o resultado.
+    def generate_aggregation_report(self, df: pd.DataFrame):
+        """
+        Executa a Tarefa 2.3: Agregação por UF, Estatísticas e Exportação.
 
-        Lógica de Negócio:
-        1. Left Join com CADOP para obter CNPJ e Razão Social.
-        2. Limpeza: Remove registros sem valor (NaN/Zero) e sem CNPJ identificado.
-        3. Agrupamento: Soma os valores por (CNPJ, Ano, Trimestre) para eliminar linhas duplicadas
-           de subcontas contábeis.
-        4. Exportação: Gera CSV com quoting forçado para evitar notação científica no Excel.
+        Calcula:
+        - Total de Despesas
+        - Média Trimestral
+        - Desvio Padrão (Volatilidade)
+        """
+        logging.info("--- Gerando Relatório Agregado (Tarefa 2.3) ---")
+
+        df_agg = (
+            df.groupby(["RazaoSocial", "UF"])["ValorDespesas"]
+            .agg(ValorTotal="sum", MediaTrimestral="mean", DesvioPadrao="std")
+            .reset_index()
+        )
+
+        df_agg["DesvioPadrao"] = df_agg["DesvioPadrao"].fillna(0.0)
+
+        df_agg = df_agg.sort_values(by="ValorTotal", ascending=False)
+
+        filename = "despesas_agregadas.csv"
+        file_path = os.path.join(self.output_dir, filename)
+
+        logging.info(f"Salvando relatório agregado em: {file_path}")
+
+        df_agg.to_csv(
+            file_path, index=False, sep=";", decimal=",", encoding="utf-8-sig"
+        )
+        zip_filename = f"Teste_JoseGustavo.zip"
+        zip_path = os.path.join(self.output_dir, zip_filename)
+
+        logging.info(f"Compactando relatório agregado: {zip_path}")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(file_path, arcname=filename)
+        logging.info(f"Arquivo compactado com sucesso: {zip_path}")
+        os.remove(file_path)
+
+    def enrich_and_export(self, df_contabil: pd.DataFrame, df_cadop: pd.DataFrame):
+        """
+        Executa o estágio final do pipeline: Enriquecimento, Consolidação, Validação, Agregação e Exportação.
+
+        Este método orquestra a transformação final dos dados, aplicando regras de negócio
+        e garantindo a integridade do dataset antes da persistência.
+
+        Fluxo de Processamento:
+        1. Enriquecimento (Join): Cruza dados contábeis com cadastro de operadoras (Ativas/Canceladas).
+        2. Limpeza Técnica: Remove lançamentos nulos ou zerados que não impactam o saldo.
+        3. Consolidação (Agregação): Agrupa e soma valores por CNPJ/Trimestre para eliminar duplicidade de subcontas.
+        4. Validação de Qualidade (Data Quality): Aplica regras de negócio via `DataValidator` (CNPJ, Razão Social, Valores)
+           e marca registros inconsistentes (Flagging) sem descartá-los.
+        5. Exportação: Gera arquivo final compactado (.zip) com formatação rigorosa (CSV com aspas forçadas).
 
         Args:
-            df_contabil (pd.DataFrame): Dados financeiros processados.
-            df_cadop (pd.DataFrame): Mestre de operadoras.
+            df_contabil (pd.DataFrame): DataFrame contendo os lançamentos financeiros filtrados.
+            df_cadop (pd.DataFrame): DataFrame Mestre contendo dados cadastrais de operadoras.
         """
+
         if df_contabil.empty or df_cadop.empty:
             logging.warning("[ALERTA] Dados insuficientes para consolidação.")
             return
 
         logging.info("--- Iniciando Enriquecimento (Left Join) ---")
 
-        df_contabil["REG_ANS"] = df_contabil["REG_ANS"].astype(str).str.strip()
-        df_cadop["REG_ANS"] = df_cadop["REG_ANS"].astype(str).str.strip()
+        df_contabil["RegistroANS"] = df_contabil["RegistroANS"].astype(str).str.strip()
+        df_cadop["RegistroANS"] = df_cadop["RegistroANS"].astype(str).str.strip()
 
-        df_final = pd.merge(df_contabil, df_cadop, on="REG_ANS", how="left")
+        df_final = pd.merge(df_contabil, df_cadop, on="RegistroANS", how="left")
+
+        fill_values = {
+            "CNPJ": "NAO_ENCONTRADO",
+            "RazaoSocial": "OPERADORA_NAO_IDENTIFICADA",
+            "Modalidade": "DESCONHECIDA",
+            "UF": "XX",
+        }
+        df_final.fillna(value=fill_values, inplace=True)
 
         df_final = df_final.dropna(subset=["VL_SALDO_FINAL"])
         df_final = df_final[df_final["VL_SALDO_FINAL"] != 0]
-        df_final = df_final.dropna(subset=["CNPJ"])
 
-        logging.info("Consolidando (Somando) despesas por CNPJ e Período...")
+        logging.info("Consolidando (Somando) despesas por Operadora...")
 
-        df_final = df_final.groupby(
-            ["CNPJ", "RazaoSocial", "Trimestre", "Ano"], as_index=False
-        )[["VL_SALDO_FINAL"]].sum()
+        group_cols = [
+            "CNPJ",
+            "RazaoSocial",
+            "RegistroANS",
+            "Modalidade",
+            "UF",
+            "Trimestre",
+            "Ano",
+        ]
+
+        existing_group_cols = [c for c in group_cols if c in df_final.columns]
+
+        df_final = df_final.groupby(existing_group_cols, as_index=False, dropna=False)[
+            ["VL_SALDO_FINAL"]
+        ].sum()
 
         df_final = df_final.rename(columns={"VL_SALDO_FINAL": "ValorDespesas"})
+
+        logging.info("--- Executando Validação de Qualidade de Dados (Validator) ---")
+        df_final = DataValidator.run_quality_checks(df_final)
+
+        invalid_count = len(df_final) - df_final["Registro_Conforme"].sum()
+
+        if invalid_count > 0:
+            logging.warning(
+                f"[ATENCAO] {invalid_count} registros apresentaram inconsistencias (Mantidos com Flag)."
+            )
+
+        self.generate_aggregation_report(df_final)
+
         df_final = df_final.sort_values(by=["Ano", "Trimestre", "RazaoSocial"])
 
         logging.info(
@@ -291,9 +387,10 @@ class DataProcessor:
         logging.info(f"Compactando para ZIP: {zip_path}")
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.write(csv_path, arcname=csv_filename)
+
         os.remove(csv_path)
         shutil.rmtree(self.temp_dir)
-        logging.info("✅ Processo concluído com sucesso!")
+        logging.info("✅ Processo (ETL + Validação) concluído com sucesso!")
 
     def run(self):
         """Orquestra o fluxo de execução do processador."""
