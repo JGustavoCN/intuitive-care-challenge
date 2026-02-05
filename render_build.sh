@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# O comando abaixo faz o script parar se der qualquer erro (segurança)
-
 set -o errexit
 
-echo "Build Start: Instalando dependências do Backend (Python)..."
+echo "Build Start: Instalando dependências..."
 pip install --upgrade pip
 pip install -r requirements.txt
+
+# Garante que as pastas existam antes do script rodar
 mkdir -p data/raw data/processed
+
+echo "Executando Pipeline de Dados..."
 python run_pipeline.py
-echo "Build: Instalando dependências do Frontend (Vue.js)..."
-# Entramos na pasta do frontend
+
+# Dá permissão de leitura para os arquivos gerados
+chmod -R 755 data/
+
+echo "Build: Frontend..."
 cd frontend
-# Instalamos os pacotes do Node
 npm install
-# Rodamos o build de produção (gera a pasta /dist)
 npm run build
-# Voltamos para a raiz
 cd ..
 
-echo "Build Success! Arquivos estáticos gerados em /frontend/dist"
+echo "Build Success!"
