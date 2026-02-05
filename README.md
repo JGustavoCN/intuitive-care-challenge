@@ -166,25 +166,62 @@ Optou-se pela **Normalização (Opção B)**, separando os dados em duas tabelas
 
 ---
 
+## 🧠 Parte 4: Decisões Arquiteturais e Trade-offs (Web App)
+
+Para o desenvolvimento da interface web e API (Tarefa 4), foram adotadas as seguintes estratégias visando simplicidade (KISS), performance e facilidade de deploy.
+
+### 1. Backend: Framework
+
+- **Escolha:** **FastAPI** (Opção B)
+- **Justificativa:** Diferente do Flask, o FastAPI oferece validação de dados nativa (Pydantic) e processamento assíncrono (ASGI), o que é crucial para performance. O fator decisivo, contudo, foi a **geração automática de documentação (Swagger UI)**, que elimina a necessidade de manutenção manual de coleções do Postman e garante que a documentação esteja sempre sincronizada com o código.
+
+### 2. Estratégia de Paginação
+
+- **Escolha:** **Offset-based** (Opção A)
+- **Justificativa:** Como a fonte de dados é um DataFrame do Pandas carregado em memória (Stateless), o acesso via índices numéricos (`df.iloc[start:end]`) é uma operação de complexidade O(1). Implementar _Cursor-based_ traria complexidade desnecessária sem ganho de performance para este volume de dados estático.
+
+### 3. Estratégia de Cache (/estatisticas)
+
+- **Escolha:** **Pré-cálculo em Memória** (Opção B/C Híbrida)
+- **Justificativa:** Como os dados (CSVs) não mudam em tempo real, as estatísticas são calculadas uma única vez durante a inicialização do servidor (`startup_event`) e armazenadas em uma variável global (Singleton). Isso reduz o tempo de resposta da rota para quase zero, sem a necessidade de um banco de dados ou Redis externo.
+
+### 4. Frontend: Busca e Filtro
+
+- **Escolha:** **Server-side Search** (Opção A)
+- **Justificativa:** Embora o CSV caiba na memória do servidor, enviar 500+ registros para o navegador do cliente sobrecarregaria dispositivos móveis e tornaria a renderização inicial lenta. A filtragem no Backend garante que o Frontend receba apenas o "payload" necessário (ex: 10 itens), mantendo a interface leve e responsiva.
+
+### 5. Deploy: Arquitetura Monolítica Híbrida
+
+- **Estratégia:** Backend servindo Frontend estático.
+- **Justificativa:** Para viabilizar o deploy no plano gratuito do Render, o Vue.js é compilado (`npm run build`) e seus arquivos estáticos são servidos pelo FastAPI. Isso elimina a necessidade de gerenciar dois serviços web distintos, evitando problemas de CORS em produção e reduzindo a chance de "Cold Starts".
+
+---
+
 ## 📂 Estrutura do Projeto
+
+O projeto foi refatorado para suportar tanto o pipeline de dados quanto a aplicação web em um Monorepo organizado.
 
 ```text
 /
-├── .vscode/             # Configurações de ambiente (DX e Padronização)
-├── data/                # Armazenamento local (ignorado no git)
-│   ├── raw/             # Arquivos ZIP e CSV baixados da ANS
-│   └── processed/       # Arquivo final: consolidado_despesas.zip
-├── src/                 # Código Fonte
-│   ├── __init__.py      # Exposição de módulos
-│   ├── scraper.py       # Crawler: Download e identificação de trimestres
-│   ├── processor.py     # ETL: Limpeza, Normalização e Consolidação
-│   └── validator.py     # Motor de regras de qualidade de dados
-├── main.py              # Orquestrador (Entrypoint)
-├── sql/                 # Armazenamento de queries
-│   └── queries.sql      # Script SQL da Tarefa 3
-├── DATA_PERSONA.md      # Documentação Técnica de Domínio
-├── requirements.txt     # Dependências do projeto
-└── README.md            # Documentação Geral
+├── .vscode/               # Configurações de DX (Tasks, Launch, Settings)
+├── data/                  # Armazenamento local (ignorado no git)
+│   ├── raw/               # ZIPs baixados
+│   └── processed/         # Fonte de dados da API (CSVs)
+├── src/
+│   ├── etl/               # 🏗️ Scripts de Engenharia de Dados
+│   │   ├── scraper.py
+│   │   ├── processor.py
+│   │   └── validator.py
+│   └── api/               # 🚀 Backend da Aplicação Web
+│       ├── main.py        # Entrypoint do FastAPI
+│       ├── database.py    # Carregador In-Memory (Pandas)
+│       └── routes.py      # Rotas e Lógica de Negócio
+├── frontend/              # 💻 Interface Vue.js 3 + Vuetify
+├── sql/                   # Queries Analíticas (Tarefa 3)
+├── run_pipeline.py        # Executável do ETL (Antigo main.py)
+├── render_build.sh        # Script de automação de deploy
+├── render.yaml            # Infra as Code para o Render
+└── requirements.txt       # Dependências unificadas
 
 ```
 
@@ -195,35 +232,37 @@ O projeto foi otimizado para **VS Code**, mas pode ser executado via terminal pa
 ### Pré-requisitos
 
 - Python 3.8 ou superior
+- Node.js 18+ (apenas para desenvolvimento frontend)
 - Git
 
 ### Instalação
 
 1. **Clone o repositório:**
 
-```bash
-git clone https://github.com/JGustavoCN/intuitive-care-challenge.git
-cd intuitive-care-challenge
+   ```bash
+   git clone https://github.com/JGustavoCN/intuitive-care-challenge.git
+   cd intuitive-care-challenge
 
-```
+   ```
 
-1. **Crie o Ambiente Virtual:**
+2. **Crie o Ambiente Virtual:**
 
-```bash
-# Windows
-python -m venv venv
-.\venv\Scripts\activate
+   ```bash
+   # Windows
+   python -m venv venv
+   .\venv\Scripts\activate
 
-# Linux/Mac
-python3 -m venv venv
-source venv/bin/activate
+   # Linux/Mac
+   python3 -m venv venv
+   source venv/bin/activate
 
-```
+   ```
 
-1. **Instale as Dependências:**
+3. **Instale as Dependências:**
 
 ```bash
 pip install -r requirements.txt
+cd frontend && npm install && cd ..
 
 ```
 
@@ -232,9 +271,25 @@ pip install -r requirements.txt
 Basta rodar o arquivo principal. O script cuidará de todo o fluxo (Download -> Processamento -> Compactação).
 
 ```bash
-python main.py
+python run_pipeline.py
 
 ```
+
+### 3. Executando a Aplicação (Fullstack)
+
+Para subir a API e o Frontend simultaneamente em modo de desenvolvimento:
+
+**Via VS Code (Recomendado):**
+
+- Execute a Task: **`🚀 DEV FULLSTACK`**
+
+**Via Terminal:**
+
+- Terminal 1 (API): `python -m uvicorn src.api.main:app --reload`
+- Terminal 2 (Front): `cd frontend && npm run dev`
+
+Acesse a aplicação em: `http://localhost:3000`
+Documentação da API (Swagger): `http://localhost:8000/docs`
 
 ### Resultados
 

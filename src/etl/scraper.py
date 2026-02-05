@@ -8,16 +8,20 @@ from typing import List, Optional, Dict
 
 
 class ANSScraper:
-    """Cliente de extração de dados responsável por navegar e baixar arquivos do FTP da ANS.
+    """
+    Agente de extração (Crawler) especializado na navegação e coleta de dados do repositório da ANS.
 
-    Esta classe implementa a lógica de crawling para identificar diretórios de anos,
-    lidar com variações de nomenclatura de arquivos (via Regex) e garantir o download
-    dos dados mais recentes disponíveis.
+    Esta classe encapsula a complexidade de interação com a estrutura de diretórios do servidor
+    de dados abertos (semelhante a um FTP via HTTP). Ela implementa estratégias de robustez,
+    identificação de arquivos via Expressões Regulares (Regex) e lógica de navegação temporal
+    para capturar apenas os dados mais recentes exigidos pelo teste.
 
     Attributes:
-        BASE_URL (str): URL raiz do servidor de dados abertos da ANS.
-        CADOP_SOURCES (Dict[str, str]): Mapeamento entre diretórios do FTP e nomes de arquivos de cadastro desejados.
-        FINANCIAL_DIR (str): Diretório relativo onde residem as demonstrações contábeis.
+        BASE_URL (str): Endpoint raiz (Entrypoint) do servidor de dados abertos da ANS.
+        CADOP_SOURCES (Dict[str, str]): Dicionário de configuração que mapeia os diretórios
+            de cadastro (Chave) para os padrões de nomes de arquivos esperados (Valor).
+            Utilizado para localizar dados de operadoras Ativas e Canceladas.
+        FINANCIAL_DIR (str): Caminho relativo do diretório contendo as demonstrações contábeis.
     """
 
     BASE_URL = "https://dadosabertos.ans.gov.br/FTP/PDA/"
@@ -30,10 +34,16 @@ class ANSScraper:
     FINANCIAL_DIR = "demonstracoes_contabeis/"
 
     def __init__(self, output_dir: str):
-        """Inicializa o Scraper configurando a sessão HTTP e o diretório de saída.
+        """
+        Inicializa a instância do Scraper e configura a persistência de conexão.
+
+        Estabelece uma sessão HTTP (`requests.Session`) para otimizar conexões TCP (Keep-Alive)
+        e define cabeçalhos personalizados (`User-Agent`) para mimetizar um navegador real,
+        mitigando riscos de bloqueio (WAF/Anti-bot) por parte do servidor da ANS.
 
         Args:
-            output_dir (str): Caminho local onde os arquivos baixados (RAW) serão salvos.
+            output_dir (str): Caminho absoluto ou relativo do diretório onde os arquivos
+                baixados (ZIPs e CSVs brutos) serão armazenados.
         """
         self.output_dir = output_dir
         self.session = requests.Session()
@@ -44,13 +54,20 @@ class ANSScraper:
         )
 
     def _get_soup(self, url: str) -> Optional[BeautifulSoup]:
-        """Baixa o HTML de uma página e retorna um objeto BeautifulSoup para navegação.
+        """
+        Executa uma requisição HTTP GET e processa a resposta HTML (Parsing).
+
+        Utiliza a sessão compartilhada (`self.session`) para realizar a chamada de rede
+        com timeout de segurança (30s). Em caso de sucesso, converte o texto bruto em um
+        objeto DOM navegável. Em caso de erro (4xx/5xx ou timeout), captura a exceção,
+        registra no log e retorna None para garantir a continuidade do fluxo (Fail-safe).
 
         Args:
-            url (str): A URL completa do diretório a ser acessado.
+            url (str): A URL completa do diretório ou página a ser acessada.
 
         Returns:
-            Optional[BeautifulSoup]: Objeto parseado ou None em caso de falha de conexão.
+            Optional[BeautifulSoup]: Objeto BeautifulSoup instanciado com parser 'html.parser',
+            ou None se ocorrer qualquer erro de conexão ou HTTP.
         """
         try:
             response = self.session.get(url, timeout=30)
@@ -61,17 +78,24 @@ class ANSScraper:
             return None
 
     def _download_file(self, url: str, filename: str) -> Optional[str]:
-        """Realiza o download de um arquivo em chunks para otimizar uso de memória.
+        """
+        Realiza o download de um arquivo remoto utilizando streaming de dados (Chunks).
 
-        Implementa um sistema de cache simples que verifica se o arquivo já existe
-        localmente antes de iniciar o download.
+        Esta função implementa três estratégias de engenharia importantes:
+        1. **Eficiência de Memória:** Usa `stream=True` e processa blocos de 8KB, permitindo
+           baixar arquivos maiores que a RAM disponível sem travamentos.
+        2. **Idempotência (Cache):** Verifica a existência local antes de baixar, economizando
+           largura de banda e tempo de execução em reprocessamentos.
+        3. **Integridade (Cleanup):** Garante que arquivos parciais/corrompidos sejam
+           deletados caso o download seja interrompido por erro.
 
         Args:
-            url (str): URL direta do arquivo.
-            filename (str): Nome com o qual o arquivo será salvo localmente.
+            url (str): Endereço HTTP direto do recurso alvo.
+            filename (str): Nome do arquivo para persistência no diretório de saída configurado.
 
         Returns:
-            Optional[str]: Caminho completo do arquivo salvo ou None em caso de erro.
+            Optional[str]: O caminho absoluto do arquivo salvo com sucesso, ou None
+            caso ocorra erro de rede ou falha de I/O.
         """
         local_path = os.path.join(self.output_dir, filename)
         if os.path.exists(local_path):
@@ -94,13 +118,22 @@ class ANSScraper:
             return None
 
     def download_cadop_data(self) -> List[str]:
-        """Baixa os arquivos de cadastro de operadoras (Ativas e Canceladas).
+        """
+        Orquestra a extração dos arquivos mestres de cadastro (Ativas e Canceladas).
 
-        Estes arquivos são essenciais para a etapa de enriquecimento (Enrichment),
-        pois fornecem o CNPJ e a Razão Social vinculados ao REG_ANS.
+        Este método é crítico para a etapa de Enriquecimento, pois os arquivos baixados
+        aqui (CADOP) funcionam como a "Pedra de Roseta" que traduz o código interno
+        da ANS (`REG_ANS`) para identificadores fiscais (`CNPJ`) e jurídicos (`Razão Social`).
+
+        Lógica de Extração:
+        1. Itera sobre as fontes configuradas em `self.CADOP_SOURCES`.
+        2. Acessa o diretório FTP correspondente.
+        3. Realiza uma busca heurística (substring match) nos links da página para encontrar
+           o CSV alvo, garantindo resiliência contra pequenas variações de nomeação por parte da ANS.
 
         Returns:
-            List[str]: Lista de caminhos locais dos arquivos baixados.
+            List[str]: Lista contendo os caminhos locais (file paths) dos arquivos CSV
+            baixados com sucesso.
         """
         downloaded = []
         logging.info("--- Iniciando download de dados Cadastrais (CADOP) ---")
@@ -135,15 +168,23 @@ class ANSScraper:
         return downloaded
 
     def run(self) -> List[str]:
-        """Executa o fluxo principal de scraping.
+        """
+        Executa o fluxo principal de scraping (Crawler) para obtenção dos dados brutos.
 
-        1. Baixa dados cadastrais (Ativas/Canceladas).
-        2. Navega nos diretórios de demonstrações contábeis.
-        3. Identifica e baixa os arquivos dos últimos 3 trimestres disponíveis.
+        Implementa uma estratégia de navegação hierárquica para identificar e baixar
+        os arquivos mais recentes disponíveis no servidor da ANS.
+
+        Fluxo de Execução:
+        1. **Dados Cadastrais:** Baixa preventivamente os CSVs de operadoras (Ativas/Canceladas).
+        2. **Navegação Temporal:** Lista os diretórios de anos em ordem decrescente (do mais recente para o mais antigo).
+        3. **Seleção Heurística:** Itera sobre os arquivos de cada ano buscando padrões de nomes
+           que indiquem trimestres (ex: '1T', '3trim') via Regex.
+        4. **Critério de Parada:** Interrompe a busca assim que coletar os 3 últimos trimestres
+           disponíveis (`MAX_QUARTERS`), otimizando o tempo de execução e o consumo de banda.
 
         Returns:
-            List[str]: Lista com todos os caminhos de arquivos baixados (Contábeis + Cadastrais)
-            para serem consumidos pelo processador.
+            List[str]: Lista consolidada com os caminhos locais (paths) de todos os arquivos
+            baixados (Contábeis + Cadastrais), pronta para ser consumida pelo DataProcessor.
         """
         downloaded_files = []
 

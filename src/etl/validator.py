@@ -5,25 +5,39 @@ from typing import List
 
 class DataValidator:
     """
-    Componente responsável pela validação de qualidade de dados (Data Quality).
-    Aplica regras de negócio e integridade sobre o DataFrame consolidado.
+    Módulo de validação e garantia de qualidade de dados (Data Quality Assurance).
+
+    Esta classe atua como um motor de regras centralizado, responsável por auditar
+    a integridade e a conformidade dos dados consolidados antes da exportação final.
+
+    Estratégia de Validação:
+    Adota uma abordagem não-destrutiva (**Soft Validation**). Em vez de interromper o pipeline
+    ou descartar registros inconsistentes (o que geraria divergências contábeis no saldo final),
+    a classe apenas anexa metadados (`flags`) indicando o status de cada registro.
+    Isso preserva a informação original para fins de auditoria e rastreabilidade.
+
+    Escopo de Regras:
+    1. **Fiscal:** Verificação algorítmica de CNPJs (Padrão Receita Federal/Módulo 11).
+    2. **Cadastral:** Verificação de completude (Campos obrigatórios preenchidos).
+    3. **Contábil:** Consistência de sinais (Validação de valores positivos em despesas).
     """
 
     @staticmethod
     def _calculate_cnpj_digit(cnpj_base: str, weights: List[int]) -> int:
         """
-        Calcula um dígito verificador do CNPJ seguindo o algoritmo Módulo 11.
+        Calcula um dígito verificador individual utilizando o algoritmo Módulo 11.
 
-        Realiza a soma ponderada dos dígitos fornecidos e aplica a lógica de resto
-        da divisão para determinar o dígito verificador (retorna 0 se resto < 2,
-        caso contrário retorna 11 - resto).
+        Esta função implementa a lógica padrão da Receita Federal: realiza a soma do produto
+        escalar entre os dígitos e seus pesos, calcula o resto da divisão por 11 e aplica
+        a regra de exceção (resto < 2 torna-se 0).
 
         Args:
-            cnpj_base (str): A sequência base de números (string) para o cálculo (ex: os 12 primeiros dígitos).
-            weights (List[int]): Lista de pesos inteiros correspondentes para a multiplicação posicional.
+            cnpj_base (str): A sequência de dígitos (string) sobre a qual o cálculo será
+                aplicado (ex: os 12 primeiros dígitos para calcular o 1º DV).
+            weights (List[int]): Vetor de pesos decrescentes alinhado à sequência base.
 
         Returns:
-            int: O dígito verificador calculado (um inteiro entre 0 e 9).
+            int: O dígito verificador calculado (0 a 9).
         """
         soma = sum(int(digit) * weight for digit, weight in zip(cnpj_base, weights))
         remainder = soma % 11
@@ -32,13 +46,22 @@ class DataValidator:
     @classmethod
     def validate_cnpj(cls, cnpj: str) -> bool:
         """
-        Valida se um CNPJ é matematicamente válido (Algoritmo Módulo 11).
+        Verifica a validade matemática de um CNPJ (Cadastro Nacional da Pessoa Jurídica).
+
+        Este método executa um pipeline completo de verificação:
+        1. **Sanitização:** Remove caracteres não numéricos (pontuação/máscaras).
+        2. **Blacklist:** Rejeita sequências de números repetidos (ex: '000...00') que,
+           embora possam passar no cálculo matemático, são juridicamente inválidas.
+        3. **Cálculo de DV:** Recalcula os dois dígitos verificadores finais com base no
+           corpo do CNPJ e compara com a entrada fornecida.
 
         Args:
-            cnpj (str): String contendo o CNPJ (com ou sem máscara).
+            cnpj (str): A string do CNPJ, podendo conter formatação (ex: '12.345.678/0001-90')
+                ou apenas números.
 
         Returns:
-            bool: True se válido, False caso contrário.
+            bool: True se o CNPJ for autêntico e respeitar o algoritmo, False caso contrário
+            (incluindo entradas nulas ou com tamanho incorreto).
         """
         if not isinstance(cnpj, str):
             return False
@@ -57,24 +80,29 @@ class DataValidator:
 
     @classmethod
     def run_quality_checks(cls, df: pd.DataFrame) -> pd.DataFrame:
-        """Executa uma bateria de validações de qualidade e enriquece o DataFrame com metadados.
+        """
+        Executa uma bateria de validações de qualidade e enriquece o DataFrame com metadados de auditoria.
 
-        Implementa a estratégia de 'Soft Validation' (Flagging), preservando os dados originais
-        mas adicionando indicadores booleanos de conformidade para auditoria posterior.
+        Implementa a estratégia de **'Soft Validation'** (Flagging): em vez de descartar registros
+        inválidos (o que causaria perda de informação financeira), o sistema apenas marca as linhas
+        com indicadores booleanos. Isso permite que a equipe de dados rastreie a origem das
+        inconsistências (Audit Trail).
 
-        Regras aplicadas:
-        1. CNPJ_Valido: Validação matemática dos dígitos verificadores (Módulo 11).
-        2. RazaoSocial_Valida: Verificação de nulidade ou string vazia.
-        3. Valor_Valido: Verificação de regra de negócio (apenas valores positivos).
+        Regras Aplicadas:
+        1. **CNPJ_Valido:** Validação matemática dos dígitos verificadores (Algoritmo Módulo 11).
+        2. **RazaoSocial_Valida:** Verificação de integridade (não nulo e não vazia).
+        3. **Valor_Valido:** Regra de negócio contábil (apenas valores positivos são considerados despesas válidas).
 
         Args:
-            df (pd.DataFrame): DataFrame consolidado contendo as colunas 'CNPJ',
-            'RazaoSocial' e 'ValorDespesas'.
+            df (pd.DataFrame): DataFrame consolidado contendo, no mínimo, as colunas
+                'CNPJ', 'RazaoSocial' e 'ValorDespesas'.
 
         Returns:
-            pd.DataFrame: O DataFrame original acrescido das colunas de validação
-            ('CNPJ_Valido', 'RazaoSocial_Valida', 'Valor_Valido') e da flag geral
-            'Registro_Conforme'.
+            pd.DataFrame: O mesmo objeto DataFrame de entrada, acrescido das colunas de validação:
+            - `CNPJ_Valido` (bool)
+            - `RazaoSocial_Valida` (bool)
+            - `Valor_Valido` (bool)
+            - `Registro_Conforme` (bool): Flag global (True apenas se todas as validações passarem).
         """
         if df.empty:
             return df

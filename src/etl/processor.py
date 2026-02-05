@@ -10,23 +10,48 @@ from .validator import DataValidator
 
 
 class DataProcessor:
-    """Motor de processamento ETL (Extract, Transform, Load) para dados da ANS.
+    """
+    Motor de processamento ETL (Extract, Transform, Load) especializado para o domínio ANS.
 
-    Esta classe é responsável por transformar os dados brutos (arquivos ZIP baixados)
-    em um dataset consolidado e enriquecido.
+    Esta classe encapsula a inteligência de negócio necessária para converter artefatos
+    brutos e heterogêneos em conjuntos de dados limpos, validados e enriquecidos.
+    Ela lida com desafios comuns de Engenharia de Dados, como Schema Drift (mudança de
+    cabeçalhos) e inconsistências de encoding.
 
-    Decisões de Arquitetura (Trade-offs):
-    - Processamento em Memória (Pandas): Escolhido devido ao volume de dados (~100k linhas)
-      caber confortavelmente na RAM, priorizando velocidade de desenvolvimento sobre escalabilidade infinita.
-    - Estratégia de Cache: Arquivos temporários são extraídos em `_temp_extraction` e limpos após uso.
+    Decisões de Arquitetura e Trade-offs Técnicos:
+    - **Processamento em Memória (Pandas):** Justificado pelo volume de dados do teste
+      (~100k a 500k linhas) que se ajusta perfeitamente à memória RAM moderna. Esta escolha
+      prioriza a velocidade de processamento e a simplicidade do código (KISS) em vez de
+      complexidades de processamento distribuído (como Spark).
+    - **Isolamento de Estado (Temporalidade):** Utiliza um diretório temporário
+      (`_temp_extraction`) para descompactação, garantindo que o processamento seja
+      idempotente e não polua o diretório de dados brutos (`raw`).
+    - **Robustez de Tipagem:** Implementa leitura forçada como string para garantir que
+      identificadores numéricos (CNPJ/Registro ANS) não percam precisão ou formatação.
+
+    Attributes:
+        input_files (List[str]): Lista de caminhos para os arquivos capturados pelo Scraper.
+        output_dir (str): Local de destino para a persistência dos arquivos CSV e ZIP finais.
+        temp_dir (str): Espaço de trabalho efêmero para manipulação de arquivos extraídos.
     """
 
     def __init__(self, input_files: List[str], output_dir: str):
-        """Inicializa o processador de dados.
+        """
+        Inicializa o contexto de processamento e prepara a infraestrutura de I/O.
+
+        Configura os diretórios de trabalho e garante um estado limpo (**Clean State**) para
+        a extração temporária de arquivos.
+
+        Estratégia de Gestão de Arquivos:
+        Ao instanciar a classe, o diretório temporário (`_temp_extraction`) é recriado
+        do zero (purgo total). Isso elimina resíduos de execuções anteriores, prevenindo
+        contaminação de dados ou conflitos de nomes durante a descompactação dos ZIPs.
 
         Args:
-            input_files (List[str]): Lista de caminhos completos dos arquivos baixados (ZIPs e CSVs).
-            output_dir (str): Diretório onde o arquivo final (ZIP consolidado) será salvo.
+            input_files (List[str]): Lista contendo os caminhos absolutos dos artefatos
+                brutos baixados (ZIPs contábeis e CSVs cadastrais) pelo Scraper.
+            output_dir (str): Caminho do diretório de destino onde os produtos finais
+                (relatórios consolidados e agregados) serão persistidos.
         """
         self.input_files = input_files
         self.output_dir = output_dir
@@ -37,16 +62,20 @@ class DataProcessor:
         os.makedirs(self.temp_dir, exist_ok=True)
 
     def _identify_period_from_filename(self, filename: str) -> tuple:
-        """Deriva o Ano e Trimestre baseando-se no nome do arquivo (Resiliência).
+        """
+        Realiza a inferência temporal (Ano/Trimestre) a partir do padrão de nomenclatura do arquivo.
 
-        Utiliza Expressões Regulares (Regex) para identificar padrões como:
-        '1T2025', '2024_3trim', '4t-2023', garantindo suporte a nomenclaturas legadas.
+        Esta função aplica expressões regulares (Regex) para extrair metadados de tempo,
+        oferecendo resiliência contra inconsistências históricas na nomeação dos arquivos da ANS.
+        É capaz de normalizar variações como '1T2025', '2024_3trim' ou '4t', garantindo
+        que o dado seja catalogado no período correto.
 
         Args:
-            filename (str): Nome do arquivo ZIP.
+            filename (str): O nome do arquivo (ZIP ou extraído) a ser analisado.
 
         Returns:
-            tuple: (Ano, Trimestre) ou (None, None) se não identificado.
+            tuple: Uma tupla `(Ano, Trimestre)` contendo strings numéricas (ex: `('2023', '1')`).
+            Retorna `(None, None)` caso o padrão não seja detectado.
         """
         year_match = re.search(r"(20\d{2})", filename)
         year = year_match.group(1) if year_match else None
@@ -58,19 +87,25 @@ class DataProcessor:
     def _load_dataframe_robust(
         self, file_path: str, sep: str = ";"
     ) -> Optional[pd.DataFrame]:
-        """Carrega arquivos tabulares lidando com inconsistências de formato e encoding.
+        """
+        Carrega dados tabulares aplicando estratégias de resiliência contra inconsistências de formato e codificação.
 
-        Estratégia de Resiliência:
-        1. Verifica extensão (.xlsx vs .csv).
-        2. Tenta encoding 'utf-8' (Padrão moderno).
-        3. Fallback para 'latin1' (Comum em sistemas governamentais legados).
+        Este método atua como uma camada de abstração de I/O, resolvendo três problemas comuns
+        em dados governamentais legados:
+        1. **Polimorfismo de Formato:** Suporta transparência entre arquivos `.csv` e `.xlsx`.
+        2. **Inferência de Encoding:** Tenta ler como `UTF-8` (padrão moderno), mas realiza
+           um **fallback automático** para `Latin-1` (ISO-8859-1) em caso de erro de decodificação,
+           comum em arquivos gerados por sistemas Windows antigos.
+        3. **Preservação de Tipos:** Força a leitura como string (`dtype=str`) para evitar
+           a supressão acidental de zeros à esquerda em identificadores (ex: CNPJ, Códigos ANS).
 
         Args:
-            file_path (str): Caminho do arquivo.
-            sep (str, optional): Delimitador do CSV. Padrão é ";".
+            file_path (str): Caminho absoluto ou relativo do arquivo a ser lido.
+            sep (str, optional): Delimitador de campos para arquivos CSV. Padrão: ";".
 
         Returns:
-            Optional[pd.DataFrame]: DataFrame carregado ou None em caso de erro crítico.
+            Optional[pd.DataFrame]: O DataFrame carregado com sucesso, ou None caso o arquivo
+            esteja corrompido, vazio ou ilegível.
         """
         try:
             if file_path.lower().endswith(".xlsx"):
@@ -84,13 +119,24 @@ class DataProcessor:
             return None
 
     def _load_cadop_master(self) -> pd.DataFrame:
-        """Constrói o Mestre de Operadoras unificando 'Ativas' e 'Canceladas'.
+        """
+        Constrói o Mestre de Operadoras (Master Data) unificando cadastros de Ativas e Canceladas.
 
-        Realiza a normalização de colunas (Schema Drift) mapeando variações como
-        'REGISTRO_OPERADORA' para 'REG_ANS'.
+        Este método atua como um normalizador central, criando uma fonte única de verdade
+        para o enriquecimento dos dados contábeis.
+
+        Estratégias de Engenharia:
+        1. **Schema Mapping:** Aplica um dicionário de tradução (`col_map`) para normalizar
+           variações históricas de nomes de colunas (ex: converte 'REGISTRO_OPERADORA' ou
+           'CD_NOTA' para o padrão 'RegistroANS').
+        2. **Unificação:** Consolida arquivos fisicamente separados em um único DataFrame.
+        3. **Deduplicação:** Garante a unicidade da chave primária (`RegistroANS`),
+           prevenindo a explosão cartesiana (duplicidade de linhas) durante o Join futuro.
 
         Returns:
-            pd.DataFrame: DataFrame contendo ['REG_ANS', 'CNPJ', 'RazaoSocial'] deduplicado.
+            pd.DataFrame: DataFrame normalizado contendo, no mínimo, as colunas
+            ['RegistroANS', 'CNPJ', 'RazaoSocial', 'Modalidade', 'UF'].
+            Retorna um DataFrame vazio caso a leitura falhe ou nenhum arquivo seja encontrado.
         """
         cadop_files = [
             f for f in self.input_files if "cadop" in os.path.basename(f).lower()
@@ -149,25 +195,26 @@ class DataProcessor:
 
     def process_accounting_files(self) -> pd.DataFrame:
         """
-        Executa a extração, normalização e filtragem dos arquivos contábeis (Item 1.2).
+        Executa a extração, normalização e filtragem dos arquivos contábeis (Motor de Transformação).
 
-        Este método é o núcleo da transformação dos dados financeiros. Ele itera sobre
-        os arquivos ZIP baixados, extrai o conteúdo tabular e aplica as regras de negócio
-        para isolar as despesas assistenciais.
+        Este método é o núcleo do pipeline de processamento financeiro. Ele orquestra a abertura
+        de arquivos comprimidos, a leitura de formatos heterogêneos (CSV/Excel) e a aplicação
+        de regras de negócio para isolar despesas assistenciais.
 
-        Etapas do Processo:
-        1. Identificação Temporal: Extrai Ano/Trimestre do nome do arquivo ZIP via Regex.
-        2. Extração Segura: Descompacta arquivos temporariamente em disco (suporte a xlsx/csv).
-        3. Normalização de Schema: Padroniza nomes de colunas (ex: 'REG_ANS' -> 'RegistroANS')
-           e remove acentuação para evitar erros de encoding.
-        4. Filtro de Negócio: Seleciona apenas linhas contendo 'EVENTO' ou 'SINISTRO'.
-        5. Sanitização Numérica: Converte valores monetários do formato brasileiro
-           ('1.000,00') para float padrão ('1000.00').
+        Fluxo de Processamento:
+        1. **Inferência Temporal:** Extrai o período (Ano/Trimestre) do nome do arquivo ZIP para enriquecimento.
+        2. **Extração Efêmera:** Descompacta arquivos em disco temporariamente apenas para leitura, economizando espaço.
+        3. **Normalização de Schema:** Padroniza nomes de colunas (Uppercasing, remoção de acentos)
+           para garantir interoperabilidade entre diferentes versões de layout da ANS.
+        4. **Filtro de Negócio:** Seleciona apenas linhas contendo chaves como 'EVENTO' ou 'SINISTRO',
+           descartando receitas e lançamentos irrelevantes para a análise de despesas.
+        5. **Sanitização Numérica:** Converte strings formatadas no padrão brasileiro (ex: '1.000,00')
+           para floats computáveis (ex: 1000.00).
 
         Returns:
-            pd.DataFrame: DataFrame empilhado (stacked) contendo as colunas:
-            ['RegistroANS', 'Ano', 'Trimestre', 'VL_SALDO_FINAL']. Retorna DataFrame
-            vazio caso nenhum dado seja processado.
+            pd.DataFrame: Um DataFrame unificado (Stacked) contendo a série histórica de despesas.
+            Schema: ['RegistroANS', 'Ano', 'Trimestre', 'VL_SALDO_FINAL'].
+            Retorna um DataFrame vazio se nenhum dado for extraído ou se ocorrerem erros críticos.
         """
         all_data = []
         accounting_zips = [f for f in self.input_files if f.endswith(".zip")]
@@ -257,12 +304,31 @@ class DataProcessor:
 
     def generate_aggregation_report(self, df: pd.DataFrame):
         """
-        Executa a Tarefa 2.3: Agregação por UF, Estatísticas e Exportação.
+        Executa a Tarefa 2.3: Geração de painel analítico agregado e empacotamento final.
 
-        Calcula:
-        - Total de Despesas
-        - Média Trimestral
-        - Desvio Padrão (Volatilidade)
+        Transforma os dados transacionais (por trimestre) em uma visão consolidada por
+        Operadora e Estado (UF), calculando métricas estatísticas de desempenho e volatilidade.
+
+        Métricas Calculadas:
+        1. **ValorTotal (Sum):** KPI principal de volume financeiro.
+        2. **MediaTrimestral (Mean):** Ticket médio de despesa por período.
+        3. **DesvioPadrao (Std):** Indicador de volatilidade.
+           *Nota:* Operadoras com apenas um registro trimestral resultam em desvio `NaN`.
+           Estes casos são tratados imputando `0.0` (ausência de variação).
+
+        Estratégia de Exportação (Localização Brasil):
+        O arquivo é gerado visando compatibilidade nativa com o Excel em português:
+        - **Separador:** Ponto e vírgula (`;`).
+        - **Decimal:** Vírgula (`,`).
+        - **Encoding:** `utf-8-sig` (BOM) para garantir a leitura correta de acentos.
+
+        Fluxo de Saída:
+        Gera o CSV, compacta-o imediatamente em um arquivo ZIP (`Teste_JoseGustavo.zip`)
+        e remove o artefato CSV original para economizar espaço em disco (Cleanup).
+
+        Args:
+            df (pd.DataFrame): DataFrame validado contendo as colunas 'RazaoSocial',
+                'UF' e 'ValorDespesas'.
         """
         logging.info("--- Gerando Relatório Agregado (Tarefa 2.3) ---")
 
@@ -295,22 +361,32 @@ class DataProcessor:
 
     def enrich_and_export(self, df_contabil: pd.DataFrame, df_cadop: pd.DataFrame):
         """
-        Executa o estágio final do pipeline: Enriquecimento, Consolidação, Validação, Agregação e Exportação.
+        Orquestra o estágio final do pipeline: Enriquecimento, Consolidação, Validação e Exportação.
 
-        Este método orquestra a transformação final dos dados, aplicando regras de negócio
-        e garantindo a integridade do dataset antes da persistência.
+        Este método atua como o integrador final, realizando o cruzamento (Join) entre os dados
+        financeiros e cadastrais, aplicando filtros de integridade contábil e disparando as
+        rotinas de auditoria de qualidade. Ao final, gera os artefatos de entrega exigidos.
 
-        Fluxo de Processamento:
-        1. Enriquecimento (Join): Cruza dados contábeis com cadastro de operadoras (Ativas/Canceladas).
-        2. Limpeza Técnica: Remove lançamentos nulos ou zerados que não impactam o saldo.
-        3. Consolidação (Agregação): Agrupa e soma valores por CNPJ/Trimestre para eliminar duplicidade de subcontas.
-        4. Validação de Qualidade (Data Quality): Aplica regras de negócio via `DataValidator` (CNPJ, Razão Social, Valores)
-           e marca registros inconsistentes (Flagging) sem descartá-los.
-        5. Exportação: Gera arquivo final compactado (.zip) com formatação rigorosa (CSV com aspas forçadas).
+        Fluxo de Processamento Detalhado:
+        1. **Enriquecimento (Left Join):** Vincula os lançamentos contábeis ao mestre de operadoras
+           usando o `RegistroANS`. Garante a preservação de dados financeiros mesmo sem match cadastral.
+        2. **Tratamento de Nulos (Fallback):** Aplica placeholders (ex: 'NAO_ENCONTRADO') para evitar
+           propagação de valores nulos em colunas críticas.
+        3. **Limpeza Técnica:** Elimina registros com saldo zerado ou nulo que não impactam o balanço.
+        4. **Consolidação (Agregação):** Agrupa os dados por CNPJ e Período, somando os valores
+           para eliminar duplicidade visual de subcontas analíticas (Tarefa 1.3).
+        5. **Auditoria de Qualidade:** Aciona o `DataValidator` para realizar o Flagging de
+           registros inconsistentes (Tarefa 2.1).
+        6. **Relatório Analítico:** Dispara a geração do relatório de estatísticas por UF (Tarefa 2.3).
+        7. **Persistência Rigorosa:** Exporta o CSV consolidado utilizando citação forçada (`QUOTE_ALL`)
+           para garantir a integridade do parser em sistemas externos.
 
         Args:
-            df_contabil (pd.DataFrame): DataFrame contendo os lançamentos financeiros filtrados.
-            df_cadop (pd.DataFrame): DataFrame Mestre contendo dados cadastrais de operadoras.
+            df_contabil (pd.DataFrame): DataFrame contendo os lançamentos financeiros já filtrados.
+            df_cadop (pd.DataFrame): DataFrame Mestre contendo os dados cadastrais consolidados.
+
+        Raises:
+            IOError: Se houver falha na escrita dos arquivos finais ou na criação do ZIP.
         """
 
         if df_contabil.empty or df_cadop.empty:
@@ -393,7 +469,21 @@ class DataProcessor:
         logging.info("✅ Processo (ETL + Validação) concluído com sucesso!")
 
     def run(self):
-        """Orquestra o fluxo de execução do processador."""
+        """
+        Orquestra o fluxo de execução sequencial do motor de processamento.
+
+        Este método atua como o 'Pipeline Manager', garantindo que as dependências de dados
+        sejam respeitadas: primeiro carrega as dimensões (CADOP), depois os fatos
+        (Contabilidade) e, por fim, executa a junção e validação.
+
+        Fluxo de Atividades:
+        1. **Extração de Metadados:** Invoca `_load_cadop_master` para preparar o de-para de CNPJ.
+        2. **Ingestão Contábil:** Invoca `process_accounting_files` para transformar os ZIPs brutos.
+        3. **Consolidação Final:** Dispara o `enrich_and_export` para gerar os produtos de dados.
+
+        Raises:
+            Exception: Propaga exceções de I/O ou processamento para o orquestrador principal (main.py).
+        """
         df_cadop = self._load_cadop_master()
         df_contabil = self.process_accounting_files()
         self.enrich_and_export(df_contabil, df_cadop)
