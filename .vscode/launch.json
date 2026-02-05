@@ -2,12 +2,23 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python: Main (Intuitive Care)",
+      "name": "🐍 Debug API (FastAPI)",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/main.py",
-      "console": "integratedTerminal",
+      "module": "uvicorn",
+      "args": ["src.api.main:app", "--reload", "--port", "8000"],
+      "jinja": true,
       "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "⚙️ Run ETL Pipeline (Batch)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_pipeline.py",
+      "console": "integratedTerminal",
       "env": {
         "PYTHONPATH": "${workspaceFolder}"
       }

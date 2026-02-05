@@ -223,3 +223,28 @@ data/
 
 # Ignorar logs do sistema (se houver)
 *.log
+
+frontend/node_modules/
+frontend/dist/         # O build de produção
+frontend/.env.local
+
+# --- Frontend (Vue.js / Node) ---
+# Ignora node_modules em qualquer pasta (raiz ou frontend/)
+**/node_modules/
+# Ignora a pasta de build final do Vue
+frontend/dist/
+# Arquivos de log de erro do npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+# Arquivos de ambiente local do frontend
+frontend/.env.local
+frontend/.env.*.local
+
+# --- IDE e Sistema Operacional ---
+.DS_Store
+Thumbs.db
+.idea/
+
+# Nota: Não estamos ignorando .vscode/ propositalmente 
+# para compartilhar as tasks e launch.json que criamos.

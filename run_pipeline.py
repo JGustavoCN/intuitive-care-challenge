@@ -1,6 +1,6 @@
 import os
 import logging
-from src import ANSScraper, DataProcessor
+from src.etl import ANSScraper, DataProcessor
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"

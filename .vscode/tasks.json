@@ -2,19 +2,68 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Instalar Dependências",
+      "label": "install-python",
       "type": "shell",
       "command": "${command:python.interpreterPath}",
       "args": ["-m", "pip", "install", "-r", "requirements.txt"],
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "always",
-        "panel": "shared"
-      },
-      "group": {
-        "kind": "build",
-        "isDefault": true
+      "presentation": { "reveal": "silent" }
+    },
+    {
+      "label": "install-frontend",
+      "type": "shell",
+      "command": "npm",
+      "args": ["install"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "presentation": { "reveal": "silent" }
+    },
+    {
+      "label": "Instalar Tudo (Setup)",
+      "dependsOn": ["install-python", "install-frontend"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "run-api",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": [
+        "-m",
+        "uvicorn",
+        "src.api.main:app",
+        "--reload",
+        "--port",
+        "8000"
+      ],
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": { "regexp": "^.*Uvicorn running.*$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*Will watch for changes.*$",
+          "endsPattern": "^.*Uvicorn running.*$"
+        }
       }
+    },
+    {
+      "label": "run-frontend",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": { "regexp": "^.*Vite.*$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*Vite.*$",
+          "endsPattern": "^.*Local:.*$"
+        }
+      }
+    },
+    {
+      "label": "🚀 DEV FULLSTACK",
+      "dependsOn": ["run-api", "run-frontend"],
+      "problemMatcher": []
     }
   ]
 }

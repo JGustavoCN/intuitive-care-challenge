@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: intuitive-care-app
+    runtime: python
+    # Aponta para o script que acabamos de criar
+    buildCommand: "./render_build.sh"
+    # O comando que inicia o servidor Web (Uvicorn)
+    # $PORT é preenchido automaticamente pelo Render
+    startCommand: "uvicorn src.api.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0

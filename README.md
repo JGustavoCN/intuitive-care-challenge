@@ -142,7 +142,7 @@ Geração de visão analítica agrupada por Operadora e Estado (UF).
 
 Conforme solicitado na Tarefa 3, foi desenvolvida a modelagem de banco de dados e queries analíticas para explorar o dataset processado.
 
-**📄 Arquivo de Entrega:** `queries_analiticas.sql` (na raiz do projeto).
+**📄 Arquivo de Entrega:** `queries.sql` (na pasta sql).
 
 ### 3.1 Modelagem (Star Schema)
 
@@ -242,6 +242,7 @@ Após a execução, verifique a pasta `data/`:
 
 - Os arquivos brutos estarão em `data/raw`.
 - O arquivo final solicitado estará em: **`data/processed/consolidado_despesas.zip`**
+- O arquivo SQL está na raiz: queries.sql
 
 ---
 

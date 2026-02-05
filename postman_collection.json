@@ -1,0 +1,256 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Intuitive Care API",
+    "description": "API de consulta de despesas da ANS (Teste Técnico)",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/operadoras": {
+      "get": {
+        "tags": ["Operadoras"],
+        "summary": "Listar Operadoras",
+        "operationId": "listar_operadoras_api_operadoras_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Número da página",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Número da página"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Itens por página",
+              "default": 10,
+              "title": "Limit"
+            },
+            "description": "Itens por página"
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "Busca por Razão Social ou CNPJ",
+              "title": "Search"
+            },
+            "description": "Busca por Razão Social ou CNPJ"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaginacaoResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/operadoras/{cnpj}": {
+      "get": {
+        "tags": ["Operadoras"],
+        "summary": "Detalhes Operadora",
+        "operationId": "detalhes_operadora_api_operadoras__cnpj__get",
+        "parameters": [
+          {
+            "name": "cnpj",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Cnpj" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OperadoraSchema" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/operadoras/{cnpj}/despesas": {
+      "get": {
+        "tags": ["Operadoras"],
+        "summary": "Historico Despesas",
+        "operationId": "historico_despesas_api_operadoras__cnpj__despesas_get",
+        "parameters": [
+          {
+            "name": "cnpj",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Cnpj" }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "default": 1, "title": "Page" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "default": 100, "title": "Limit" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaginacaoResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/estatisticas": {
+      "get": {
+        "tags": ["Operadoras"],
+        "summary": "Obter Estatisticas",
+        "operationId": "obter_estatisticas_api_estatisticas_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EstatisticasSchema" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "EstatisticasSchema": {
+        "properties": {
+          "total_despesas": { "type": "number", "title": "Total Despesas" },
+          "media_trimestral": { "type": "number", "title": "Media Trimestral" },
+          "total_operadoras": {
+            "type": "integer",
+            "title": "Total Operadoras"
+          },
+          "top_5_uf": {
+            "items": { "additionalProperties": true, "type": "object" },
+            "type": "array",
+            "title": "Top 5 Uf"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_despesas",
+          "media_trimestral",
+          "total_operadoras",
+          "top_5_uf"
+        ],
+        "title": "EstatisticasSchema"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": { "$ref": "#/components/schemas/ValidationError" },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "MetaData": {
+        "properties": {
+          "total_items": { "type": "integer", "title": "Total Items" },
+          "page": { "type": "integer", "title": "Page" },
+          "limit": { "type": "integer", "title": "Limit" },
+          "total_pages": { "type": "integer", "title": "Total Pages" }
+        },
+        "type": "object",
+        "required": ["total_items", "page", "limit", "total_pages"],
+        "title": "MetaData"
+      },
+      "OperadoraSchema": {
+        "properties": {
+          "RegistroANS": { "type": "string", "title": "Registroans" },
+          "CNPJ": { "type": "string", "title": "Cnpj" },
+          "RazaoSocial": { "type": "string", "title": "Razaosocial" },
+          "UF": { "type": "string", "title": "Uf" },
+          "Modalidade": { "type": "string", "title": "Modalidade" }
+        },
+        "type": "object",
+        "required": ["RegistroANS", "CNPJ", "RazaoSocial", "UF", "Modalidade"],
+        "title": "OperadoraSchema"
+      },
+      "PaginacaoResponse": {
+        "properties": {
+          "data": { "items": {}, "type": "array", "title": "Data" },
+          "meta": { "$ref": "#/components/schemas/MetaData" }
+        },
+        "type": "object",
+        "required": ["data", "meta"],
+        "title": "PaginacaoResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": { "anyOf": [{ "type": "string" }, { "type": "integer" }] },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": { "type": "string", "title": "Message" },
+          "type": { "type": "string", "title": "Error Type" },
+          "input": { "title": "Input" },
+          "ctx": { "type": "object", "title": "Context" }
+        },
+        "type": "object",
+        "required": ["loc", "msg", "type"],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

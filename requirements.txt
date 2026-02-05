@@ -1,10 +1,14 @@
-# Extração de dados (Scraper)
+# --- Core ETL ---
 requests
 beautifulsoup4
-
-# Processamento de dados (Processor)
 pandas
 openpyxl
 
-# Qualidade de Código e Formatação
+# --- API & Server ---
+fastapi          # Framework Web
+uvicorn          # Servidor ASGI
+pydantic         # Validação de Dados
+python-multipart # Uploads (se precisar)
+
+# --- Qualidade e DX ---
 black

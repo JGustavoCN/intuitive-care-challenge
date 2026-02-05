@@ -2,13 +2,21 @@
   "python.formatting.provider": "none",
   "editor.formatOnSave": true,
   "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.extraPaths": ["./src"],
   "[python]": {
     "editor.defaultFormatter": "ms-python.black-formatter"
+  },
+  "[vue]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "autoDocstring.docstringFormat": "google",
   "files.exclude": {
     "**/__pycache__": true,
     "**/.DS_Store": true,
+    "**/node_modules": true,
     "**/*.zip": true,
     "**/*.csv": true
   }
