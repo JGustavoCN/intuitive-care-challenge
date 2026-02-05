@@ -6,6 +6,7 @@ set -o errexit
 echo "Build Start: Instalando dependências do Backend (Python)..."
 pip install --upgrade pip
 pip install -r requirements.txt
+mkdir -p data/raw data/processed
 python run_pipeline.py
 echo "Build: Instalando dependências do Frontend (Vue.js)..."
 # Entramos na pasta do frontend
