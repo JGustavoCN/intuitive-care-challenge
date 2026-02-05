@@ -138,6 +138,34 @@ Geração de visão analítica agrupada por Operadora e Estado (UF).
 
 ---
 
+## 🗄️ Parte 3: Modelagem de Dados e SQL
+
+Conforme solicitado na Tarefa 3, foi desenvolvida a modelagem de banco de dados e queries analíticas para explorar o dataset processado.
+
+**📄 Arquivo de Entrega:** `queries_analiticas.sql` (na raiz do projeto).
+
+### 3.1 Modelagem (Star Schema)
+
+Optou-se pela **Normalização (Opção B)**, separando os dados em duas tabelas principais:
+
+1. **Dimensão (`operadoras`):** Contém dados cadastrais mutáveis (Razão Social, UF).
+2. **Fato (`despesas_consolidadas`):** Contém os eventos financeiros imutáveis, referenciando a dimensão via chave estrangeira.
+
+**Justificativa:** Essa abordagem economiza armazenamento e otimiza a performance de agregações (SUM/AVG), pois a engine do banco não precisa ler strings longas repetidas a cada trimestre.
+
+### 3.2 Decisões de Tipagem
+
+- **Valores Monetários:** `DECIMAL(15,2)` ao invés de `FLOAT` para garantir precisão contábil e evitar erros de ponto flutuante.
+- **Datas:** Colunas inteiras separadas (`ano`, `trimestre`) para facilitar a indexação e queries de agrupamento temporal.
+
+### 3.3 Estratégia de Deploy (Web)
+
+> **Nota de Arquitetura:** Para a execução da **Tarefa 4 (Interface Web)**, optou-se estrategicamente por **utilizar os arquivos CSV processados** como fonte de dados, em vez de manter uma instância de banco de dados ativa.
+>
+> Essa decisão reduz a complexidade de infraestrutura ("Serverless") e elimina custos de cloud para este MVP, embora o código SQL fornecido comprove a capacidade de migração para um ambiente produtivo baseado em PostgreSQL/MySQL.
+
+---
+
 ## 📂 Estrutura do Projeto
 
 ```text
@@ -149,8 +177,10 @@ Geração de visão analítica agrupada por Operadora e Estado (UF).
 ├── src/                 # Código Fonte
 │   ├── __init__.py      # Exposição de módulos
 │   ├── scraper.py       # Crawler: Download e identificação de trimestres
-│   └── processor.py     # ETL: Limpeza, Normalização e Consolidação
+│   ├── processor.py     # ETL: Limpeza, Normalização e Consolidação
+│   └── validator.py     # Motor de regras de qualidade de dados
 ├── main.py              # Orquestrador (Entrypoint)
+├── queries_analiticas.sql # Script SQL da Tarefa 3
 ├── DATA_PERSONA.md      # Documentação Técnica de Domínio
 ├── requirements.txt     # Dependências do projeto
 └── README.md            # Documentação Geral
